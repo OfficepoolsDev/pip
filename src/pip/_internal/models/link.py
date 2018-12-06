@@ -4,9 +4,10 @@ import re
 from pip._vendor.six.moves.urllib import parse as urllib_parse
 
 from pip._internal.download import path_to_url
-from pip._internal.utils.misc import splitext
+from pip._internal.utils.misc import (
+    WHEEL_EXTENSION, redact_password_from_url, splitext,
+)
 from pip._internal.utils.models import KeyBasedCompareMixin
-from pip._internal.wheel import wheel_ext
 
 
 class Link(KeyBasedCompareMixin):
@@ -44,9 +45,10 @@ class Link(KeyBasedCompareMixin):
         else:
             rp = ''
         if self.comes_from:
-            return '%s (from %s)%s' % (self.url, self.comes_from, rp)
+            return '%s (from %s)%s' % (redact_password_from_url(self.url),
+                                       self.comes_from, rp)
         else:
-            return str(self.url)
+            return redact_password_from_url(str(self.url))
 
     def __repr__(self):
         return '<Link %s>' % self
@@ -125,7 +127,7 @@ class Link(KeyBasedCompareMixin):
 
     @property
     def is_wheel(self):
-        return self.ext == wheel_ext
+        return self.ext == WHEEL_EXTENSION
 
     @property
     def is_artifact(self):

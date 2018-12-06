@@ -17,9 +17,8 @@ from pip._internal.utils.typing import MYPY_CHECK_RUNNING
 
 if MYPY_CHECK_RUNNING:
     from typing import Dict, Optional, Tuple  # noqa: F401
-    from pip._internal.cli.base_command import Command  # noqa: F401
 
-__all__ = ['vcs', 'get_src_requirement']
+__all__ = ['vcs']
 
 
 logger = logging.getLogger(__name__)
@@ -87,7 +86,7 @@ class RevOptions(object):
 
 
 class VcsSupport(object):
-    _registry = {}  # type: Dict[str, Command]
+    _registry = {}  # type: Dict[str, VersionControl]
     schemes = ['ssh', 'git', 'hg', 'bzr', 'sftp', 'svn']
 
     def __init__(self):
@@ -133,28 +132,22 @@ class VcsSupport(object):
         else:
             logger.warning('Cannot unregister because no class or name given')
 
-    def get_backend_name(self, location):
+    def get_backend_type(self, location):
         """
-        Return the name of the version control backend if found at given
-        location, e.g. vcs.get_backend_name('/path/to/vcs/checkout')
+        Return the type of the version control backend if found at given
+        location, e.g. vcs.get_backend_type('/path/to/vcs/checkout')
         """
         for vc_type in self._registry.values():
             if vc_type.controls_location(location):
                 logger.debug('Determine that %s uses VCS: %s',
                              location, vc_type.name)
-                return vc_type.name
+                return vc_type
         return None
 
     def get_backend(self, name):
         name = name.lower()
         if name in self._registry:
             return self._registry[name]
-
-    def get_backend_from_location(self, location):
-        vc_type = self.get_backend_name(location)
-        if vc_type:
-            return self.get_backend(vc_type)
-        return None
 
 
 vcs = VcsSupport()
@@ -334,7 +327,7 @@ class VersionControl(object):
 
         rev_display = rev_options.to_display()
         if self.is_repository_directory(dest):
-            existing_url = self.get_url(dest)
+            existing_url = self.get_remote_url(dest)
             if self.compare_urls(existing_url, url):
                 logger.debug(
                     '%s in %s exists, and has correct URL (%s)',
@@ -417,7 +410,7 @@ class VersionControl(object):
             rmtree(location)
         self.obtain(location)
 
-    def get_src_requirement(self, dist, location):
+    def get_src_requirement(self, location, project_name):
         """
         Return a string representing the requirement needed to
         redownload the files currently present in location, something
@@ -426,7 +419,7 @@ class VersionControl(object):
         """
         raise NotImplementedError
 
-    def get_url(self, location):
+    def get_remote_url(self, location):
         """
         Return the url used at location
         """
@@ -485,25 +478,3 @@ class VersionControl(object):
         the Git override checks that Git is actually available.
         """
         return cls.is_repository_directory(location)
-
-
-def get_src_requirement(dist, location):
-    version_control = vcs.get_backend_from_location(location)
-    if version_control:
-        try:
-            return version_control().get_src_requirement(dist,
-                                                         location)
-        except BadCommand:
-            logger.warning(
-                'cannot determine version of editable source in %s '
-                '(%s command not found in path)',
-                location,
-                version_control.name,
-            )
-            return dist.as_requirement()
-    logger.warning(
-        'cannot determine version of editable source in %s (is not SVN '
-        'checkout, Git clone, Mercurial clone or Bazaar branch)',
-        location,
-    )
-    return dist.as_requirement()

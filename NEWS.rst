@@ -18,7 +18,6 @@ Features
   As a security measure, pip will raise an exception when installing packages from
   PyPI if those packages depend on packages not also hosted on PyPI.
   In the future, PyPI will block uploading packages with such external URL dependencies directly. (`#4187 <https://github.com/pypa/pip/issues/4187>`_)
-- Upgrade pyparsing to 2.2.1. (`#5013 <https://github.com/pypa/pip/issues/5013>`_)
 - Allows dist options (--abi, --python-version, --platform, --implementation) when installing with --target (`#5355 <https://github.com/pypa/pip/issues/5355>`_)
 - Support passing ``svn+ssh`` URLs with a username to ``pip install -e``. (`#5375 <https://github.com/pypa/pip/issues/5375>`_)
 - pip now ensures that the RECORD file is sorted when installing from a wheel file. (`#5525 <https://github.com/pypa/pip/issues/5525>`_)
@@ -44,6 +43,7 @@ Vendored Libraries
 
 - Upgrade certifi to 2018.8.24
 - Upgrade packaging to 18.0
+- Upgrade pyparsing to 2.2.1
 - Add pep517 version 0.2
 - Upgrade pytoml to 0.1.19
 - Upgrade pkg_resources to 40.4.3 (via setuptools)
@@ -64,7 +64,7 @@ Process
 - Formally document our deprecation process as a minimum of 6 months of deprecation
   warnings.
 - Adopt and document NEWS fragment writing style.
-- Switch to releasing a new, non bug fix version of pip every 3 months.
+- Switch to releasing a new, non-bug fix version of pip every 3 months.
 
 Deprecations and Removals
 -------------------------
@@ -165,7 +165,7 @@ Bug Fixes
 ---------
 
 - Prevent false-positive installation warnings due to incomplete name
-  normalizaton. (#5134)
+  normalization. (#5134)
 - Fix issue where installing from Git with a short SHA would fail. (#5140)
 - Accept pre-release versions when checking for conflicts with pip check or pip
   install. (#5141)

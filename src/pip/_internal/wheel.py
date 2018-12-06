@@ -30,6 +30,7 @@ from pip._internal.exceptions import (
 from pip._internal.locations import (
     PIP_DELETE_MARKER_FILENAME, distutils_scheme,
 )
+from pip._internal.models.link import Link
 from pip._internal.utils.logging import indent_log
 from pip._internal.utils.misc import (
     call_subprocess, captured_stdout, ensure_dir, read_chunks,
@@ -41,8 +42,6 @@ from pip._internal.utils.ui import open_spinner
 
 if MYPY_CHECK_RUNNING:
     from typing import Dict, List, Optional  # noqa: F401
-
-wheel_ext = '.whl'
 
 VERSION_COMPATIBLE = (1, 0)
 
@@ -72,6 +71,14 @@ def open_for_csv(name, mode):
         nl = {'newline': ''}
         bin = ''
     return open(name, mode + bin, **nl)
+
+
+def replace_python_tag(wheelname, new_tag):
+    """Replace the Python tag in a wheel file name with a new value.
+    """
+    parts = wheelname.split('-')
+    parts[-3] = new_tag
+    return '-'.join(parts)
 
 
 def fix_script(path):
@@ -204,10 +211,33 @@ def message_about_scripts_not_on_PATH(scripts):
     return "\n".join(msg_lines)
 
 
+def sorted_outrows(outrows):
+    """
+    Return the given rows of a RECORD file in sorted order.
+
+    Each row is a 3-tuple (path, hash, size) and corresponds to a record of
+    a RECORD file (see PEP 376 and PEP 427 for details).  For the rows
+    passed to this function, the size can be an integer as an int or string,
+    or the empty string.
+    """
+    # Normally, there should only be one row per path, in which case the
+    # second and third elements don't come into play when sorting.
+    # However, in cases in the wild where a path might happen to occur twice,
+    # we don't want the sort operation to trigger an error (but still want
+    # determinism).  Since the third element can be an int or string, we
+    # coerce each element to a string to avoid a TypeError in this case.
+    # For additional background, see--
+    # https://github.com/pypa/pip/issues/5868
+    return sorted(outrows, key=lambda row: tuple(str(x) for x in row))
+
+
 def move_wheel_files(name, req, wheeldir, user=False, home=None, root=None,
                      pycompile=True, scheme=None, isolated=False, prefix=None,
                      warn_script_location=True):
     """Install a wheel"""
+    # TODO: Investigate and break this up.
+    # TODO: Look into moving this into a dedicated class for representing an
+    #       installation.
 
     if not scheme:
         scheme = distutils_scheme(
@@ -511,7 +541,8 @@ if __name__ == '__main__':
                 outrows.append((normpath(f, lib_dir), digest, length))
             for f in installed:
                 outrows.append((installed[f], '', ''))
-            for row in sorted(outrows):
+            # Sort to simplify testing.
+            for row in sorted_outrows(outrows):
                 writer.writerow(row)
     shutil.move(temp_record, record)
 
@@ -567,7 +598,8 @@ def check_compatibility(version, name):
 class Wheel(object):
     """A wheel file"""
 
-    # TODO: maybe move the install code into this class
+    # TODO: Maybe move the class into the models sub-package
+    # TODO: Maybe move the install code into this class
 
     wheel_file_re = re.compile(
         r"""^(?P<namever>(?P<name>.+?)-(?P<ver>.*?))
@@ -620,6 +652,15 @@ class Wheel(object):
         return bool(set(tags).intersection(self.file_tags))
 
 
+def _contains_egg_info(
+        s, _egg_info_re=re.compile(r'([a-z0-9_.]+)-([a-z0-9_.!+-]+)', re.I)):
+    """Determine whether the string looks like an egg_info.
+
+    :param s: The string to parse. E.g. foo-2.1
+    """
+    return bool(_egg_info_re.search(s))
+
+
 class WheelBuilder(object):
     """Build wheels from a RequirementSet."""
 
@@ -647,7 +688,11 @@ class WheelBuilder(object):
 
     def _build_one_inside_env(self, req, output_dir, python_tag=None):
         with TempDirectory(kind="wheel") as temp_dir:
-            if self.__build_one(req, temp_dir.path, python_tag=python_tag):
+            if req.use_pep517:
+                builder = self._build_one_pep517
+            else:
+                builder = self._build_one_legacy
+            if builder(req, temp_dir.path, python_tag=python_tag):
                 try:
                     wheel_name = os.listdir(temp_dir.path)[0]
                     wheel_path = os.path.join(output_dir, wheel_name)
@@ -672,10 +717,33 @@ class WheelBuilder(object):
             SETUPTOOLS_SHIM % req.setup_py
         ] + list(self.global_options)
 
-    def __build_one(self, req, tempd, python_tag=None):
+    def _build_one_pep517(self, req, tempd, python_tag=None):
+        assert req.metadata_directory is not None
+        try:
+            req.spin_message = 'Building wheel for %s (PEP 517)' % (req.name,)
+            logger.debug('Destination directory: %s', tempd)
+            wheelname = req.pep517_backend.build_wheel(
+                tempd,
+                metadata_directory=req.metadata_directory
+            )
+            if python_tag:
+                # General PEP 517 backends don't necessarily support
+                # a "--python-tag" option, so we rename the wheel
+                # file directly.
+                newname = replace_python_tag(wheelname, python_tag)
+                os.rename(
+                    os.path.join(tempd, wheelname),
+                    os.path.join(tempd, newname)
+                )
+            return True
+        except Exception:
+            logger.error('Failed building wheel for %s', req.name)
+            return False
+
+    def _build_one_legacy(self, req, tempd, python_tag=None):
         base_args = self._base_setup_args(req)
 
-        spin_message = 'Running setup.py bdist_wheel for %s' % (req.name,)
+        spin_message = 'Building wheel for %s (setup.py)' % (req.name,)
         with open_spinner(spin_message) as spinner:
             logger.debug('Destination directory: %s', tempd)
             wheel_args = base_args + ['bdist_wheel', '-d', tempd] \
@@ -712,9 +780,8 @@ class WheelBuilder(object):
             newly built wheel, in preparation for installation.
         :return: True if all the wheels built correctly.
         """
-        from pip._internal import index
-        from pip._internal.models.link import Link
-
+        # TODO: This check fails if --no-cache-dir is set. And yet we
+        #       might be able to build into the ephemeral cache, surely?
         building_is_possible = self._wheel_dir or (
             autobuilding and self.wheel_cache.cache_dir
         )
@@ -742,7 +809,7 @@ class WheelBuilder(object):
                 if autobuilding:
                     link = req.link
                     base, ext = link.splitext()
-                    if index.egg_info_matches(base, None, link) is None:
+                    if not _contains_egg_info(base):
                         # E.g. local directory. Build wheel just for this run.
                         ephem_cache = True
                     if "binary" not in format_control.get_allowed_formats(
@@ -755,7 +822,10 @@ class WheelBuilder(object):
                 buildset.append((req, ephem_cache))
 
         if not buildset:
-            return True
+            return []
+
+        # TODO by @pradyunsg
+        # Should break up this method into 2 separate methods.
 
         # Build the wheels.
         logger.info(
@@ -827,5 +897,5 @@ class WheelBuilder(object):
                 'Failed to build %s',
                 ' '.join([req.name for req in build_failure]),
             )
-        # Return True if all builds were successful
-        return len(build_failure) == 0
+        # Return a list of requirements that failed to build
+        return build_failure
