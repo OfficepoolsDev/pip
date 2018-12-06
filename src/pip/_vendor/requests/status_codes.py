@@ -27,7 +27,7 @@ _codes = {
     102: ('processing',),
     103: ('checkpoint',),
     122: ('uri_too_long', 'request_uri_too_long'),
-    200: ('ok', 'okay', 'all_ok', 'all_okay', 'all_good', '\\o/', '✓'),
+    200: ('ok', 'okay', 'all_ok', 'all_okay', 'all_good', '\o/', '✓'),
     201: ('created',),
     202: ('accepted',),
     203: ('non_authoritative_info', 'non_authoritative_information'),
